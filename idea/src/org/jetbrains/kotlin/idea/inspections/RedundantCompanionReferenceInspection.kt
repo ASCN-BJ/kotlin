@@ -11,24 +11,30 @@ import com.intellij.codeInspection.ProblemHighlightType
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElementVisitor
+import org.jetbrains.kotlin.descriptors.ClassDescriptor
+import org.jetbrains.kotlin.descriptors.ConstructorDescriptor
+import org.jetbrains.kotlin.idea.caches.resolve.resolveToCall
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.idea.search.usagesSearch.descriptor
-import org.jetbrains.kotlin.psi.KtDotQualifiedExpression
-import org.jetbrains.kotlin.psi.KtObjectDeclaration
-import org.jetbrains.kotlin.psi.KtReferenceExpression
-import org.jetbrains.kotlin.psi.referenceExpressionVisitor
-import org.jetbrains.kotlin.resolve.DescriptorUtils
+import org.jetbrains.kotlin.psi.*
+import org.jetbrains.kotlin.psi.psiUtil.getParentOfType
 
 class RedundantCompanionReferenceInspection : AbstractKotlinInspection() {
     override fun buildVisitor(holder: ProblemsHolder, isOnTheFly: Boolean): PsiElementVisitor {
         return referenceExpressionVisitor(fun(expression) {
             val parent = expression.parent as? KtDotQualifiedExpression ?: return
             if (expression == parent.selectorExpression && parent.parent !is KtDotQualifiedExpression) return
+            if (parent.getParentOfType<KtImportDirective>(strict = true) != null) return
 
-            val descriptor = (expression.mainReference.resolve() as? KtObjectDeclaration)?.descriptor ?: return
-            if (!DescriptorUtils.isCompanionObject(descriptor)) return
+            val descriptor = (expression.mainReference.resolve() as? KtObjectDeclaration)?.descriptor as? ClassDescriptor ?: return
+            if (!descriptor.isCompanionObject) return
+            if (expression.text != descriptor.name.asString()) return
 
-            if (expression == parent.receiverExpression && expression.text == descriptor.containingDeclaration?.name?.asString()) return
+            val grandParent = parent.parent as? KtQualifiedExpression
+            if (grandParent != null) {
+                val grandParentDescriptor = grandParent.resolveToCall()?.resultingDescriptor ?: return
+                if (grandParentDescriptor is ConstructorDescriptor) return
+            }
 
             holder.registerProblem(
                 expression,
